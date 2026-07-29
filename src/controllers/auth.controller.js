@@ -1,5 +1,6 @@
 import userModel from "../models/user.model.js";
 import crypto from "crypto";
+import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import config from "../config/config.js";
 import sessionModel from "../models/session.model.js";
@@ -25,7 +26,7 @@ export async function register(req, res){
     }
     // Password is not stored directly instead we store as hashed
 
-    const hashedPass = crypto.createHash("sha256").update(password).digest("hex");
+    const hashedPass = await bcrypt.hash(password, 12);
 
     const user = await userModel.create({
         username,
@@ -107,9 +108,7 @@ export async function login(req, res){
         })
     }
 
-    const hashedPassword = crypto.createHash("sha256").update(password).digest("hex");
-
-    const isPasswordValid = hashedPassword == user.password;
+    const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if(!isPasswordValid){
         return res.status(401).json({
@@ -118,7 +117,7 @@ export async function login(req, res){
     }
 
     const refreshToken = jwt.sign({
-        id: user.id
+        id: user._id
     }, config.JWT_SECRET,{
         expiresIn: "7d"
     })
@@ -165,10 +164,23 @@ export async function getMe(req, res){
         })
     }
 
-    const decoded = jwt.verify(token, config.JWT_SECRET)
+    let decoded;
+    try {
+        decoded = jwt.verify(token, config.JWT_SECRET)
+    } catch (error) {
+        return res.status(401).json({
+            message: "Invalid or expired token"
+        })
+    }
     // console.log(decoded);
 
     const user = await userModel.findById(decoded.id)
+
+    if(!user){
+        return res.status(401).json({
+            message: "Invalid or expired token"
+        })
+    }
 
     res.status(200).json({
         message:"user fetched successfully",
@@ -188,7 +200,14 @@ export async function refreshToken(req, res){
         })
     }
 
-    const decoded = jwt.verify(refreshToken, config.JWT_SECRET);
+    let decoded;
+    try {
+        decoded = jwt.verify(refreshToken, config.JWT_SECRET);
+    } catch (error) {
+        return res.status(401).json({
+            message: "Invalid or expired token"
+        })
+    }
 
     const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
 
@@ -239,7 +258,7 @@ export async function logout(req, res){
     const refreshToken = req.cookies.refreshToken;
 
     if(!refreshToken){
-        res.status(400).json({
+        return res.status(400).json({
             message: "Refresh token not found"
         })
     }
@@ -275,10 +294,30 @@ export async function logoutAll(req, res){
         })
     }
 
-    const decoded = jwt.verify(refreshToken, config.JWT_SECRET)
+    let decoded;
+    try {
+        decoded = jwt.verify(refreshToken, config.JWT_SECRET)
+    } catch (error) {
+        return res.status(401).json({
+            message: "Invalid or expired token"
+        })
+    }
+
+    const refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+
+    const session = await sessionModel.findOne({
+        refreshTokenHash,
+        revoked: false
+    })
+
+    if(!session){
+        return res.status(400).json({
+            message: "Invalid refresh token"
+        })
+    }
 
     await sessionModel.updateMany({
-        user: decoded._id,
+        user: decoded.id,
         revoked: false
     }, {
         revoked: true
@@ -306,9 +345,11 @@ export async function verifyEmail(req, res){
         })
     }
 
-    const user = await userModel.findByIdAndUpdate(otpDoc.user, {
-        verified: true
-    });
+    const user = await userModel.findByIdAndUpdate(
+        otpDoc.user,
+        { verified: true },
+        { new: true }
+    );
 
     await otpModel.deleteMany({
         user: otpDoc.user
