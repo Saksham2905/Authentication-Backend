@@ -246,6 +246,3 @@ Revokes all active sessions for the authenticated user and clears the refresh co
 - OTPs are generated with `crypto.randomInt`, hashed before storage, and deleted by MongoDB TTL after **10 minutes**.
 - Invalid or expired JWTs return `{ "message": "Invalid or expired token" }`.
 
-## License
-
-ISC
